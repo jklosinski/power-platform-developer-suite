@@ -377,7 +377,7 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
 
         _cacheProvider?.InvalidateEntity(request.EntityLogicalName);
 
-        reporter?.ReportInfo($"Column '{request.ColumnLogicalName}' updated on '{request.EntityLogicalName}'.");
+        reporter?.ReportInfo($"Column '{request.ColumnLogicalName}' updated on '{request.EntityLogicalName}'. Run 'ppds metadata publish {request.EntityLogicalName}' to publish changes.");
         _logger?.LogInformation("Updated column {Column} on {Entity}", request.ColumnLogicalName, request.EntityLogicalName);
     }
 
