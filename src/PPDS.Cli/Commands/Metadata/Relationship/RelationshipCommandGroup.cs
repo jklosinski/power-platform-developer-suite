@@ -71,6 +71,11 @@ public static class RelationshipCommandGroup
             Description = "Display name of the lookup column (one-to-many only)"
         };
 
+        var intersectEntityOption = new Option<string?>("--intersect-entity")
+        {
+            Description = "Schema name of the intersect entity (many-to-many only). Defaults to --name."
+        };
+
         var cascadeDeleteOption = new Option<CascadeBehavior?>("--cascade-delete")
         {
             Description = "Cascade behavior for delete: Cascade, Active, NoCascade, RemoveLink, Restrict"
@@ -96,6 +101,7 @@ public static class RelationshipCommandGroup
             nameOption,
             lookupNameOption,
             lookupDisplayNameOption,
+            intersectEntityOption,
             cascadeDeleteOption,
             cascadeAssignOption,
             dryRunOption,
@@ -114,6 +120,7 @@ public static class RelationshipCommandGroup
             var name = parseResult.GetValue(nameOption)!;
             var lookupName = parseResult.GetValue(lookupNameOption);
             var lookupDisplayName = parseResult.GetValue(lookupDisplayNameOption);
+            var intersectEntity = parseResult.GetValue(intersectEntityOption);
             var cascadeDelete = parseResult.GetValue(cascadeDeleteOption);
             var cascadeAssign = parseResult.GetValue(cascadeAssignOption);
             var dryRun = parseResult.GetValue(dryRunOption);
@@ -123,7 +130,7 @@ public static class RelationshipCommandGroup
 
             return await ExecuteCreateAsync(
                 solution, from, to, type, name,
-                lookupName, lookupDisplayName,
+                lookupName, lookupDisplayName, intersectEntity,
                 cascadeDelete, cascadeAssign, dryRun,
                 profile, environment, globalOptions, cancellationToken);
         });
@@ -139,6 +146,7 @@ public static class RelationshipCommandGroup
         string name,
         string? lookupName,
         string? lookupDisplayName,
+        string? intersectEntity,
         CascadeBehavior? cascadeDelete,
         CascadeBehavior? cascadeAssign,
         bool dryRun,
@@ -189,6 +197,7 @@ public static class RelationshipCommandGroup
                     Entity1LogicalName = from,
                     Entity2LogicalName = to,
                     SchemaName = name,
+                    IntersectEntitySchemaName = intersectEntity,
                     DryRun = dryRun
                 };
 
