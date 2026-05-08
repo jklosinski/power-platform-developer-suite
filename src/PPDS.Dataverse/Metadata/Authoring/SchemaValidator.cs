@@ -224,7 +224,7 @@ public sealed class SchemaValidator
         // The Dataverse CreateManyToManyRequest message requires IntersectEntitySchemaName.
         // The caller defaults it to SchemaName before validation; we re-validate the resolved value so
         // dry-run rejects a missing or malformed intersect name (which would otherwise only fail at execute time).
-        CollectIfInvalid(messages, () => ValidateRequiredString(resolvedIntersectSchemaName!, "IntersectEntitySchemaName"));
+        CollectIfInvalid(messages, () => ValidateRequiredString(resolvedIntersectSchemaName, "IntersectEntitySchemaName"));
         if (!string.IsNullOrWhiteSpace(resolvedIntersectSchemaName))
         {
             CollectIfInvalid(messages, () => ValidateSchemaName(resolvedIntersectSchemaName));
