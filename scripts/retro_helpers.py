@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import subprocess
 import sys
 
@@ -156,7 +157,7 @@ def _encode_project_dir(path):
     with ``-``, not just ``:\\/.`` (the older retro rule missed underscores
     and dropped transcripts on Windows usernames like ``josh_``).
     """
-    return derive_slug(os.path.abspath(path))
+    return derive_slug(path)
 
 
 def discover_transcripts(worktree_path, since=None):
@@ -204,12 +205,27 @@ def discover_transcripts(worktree_path, since=None):
 
 
 def _git_log(args, cwd=None):
-    """Run ``git log`` and return stdout text, empty string on failure."""
+    """Run ``git log`` and return stdout text, empty string on failure.
+
+    Two configuration choices matter here for path handling:
+
+    - ``-c core.quotePath=off`` disables git's C-style escaping of paths
+      with spaces, unicode, or backslashes. Without it, a path like
+      ``scripts/é.py`` arrives as ``"scripts/\\303\\251.py"`` with octal
+      escapes — disabling at the source is more correct than trying to
+      unescape on the consumer side.
+    - ``encoding="utf-8"`` overrides Python's default of decoding via the
+      system codepage (cp1252 on Windows), which would otherwise turn
+      git's UTF-8 ``é`` (bytes ``0xC3 0xA9``) into the two-char string
+      ``Ã©`` and break disk-path matching against the actual NTFS entry.
+    """
     try:
         out = subprocess.run(
-            ["git", "log", *args],
+            ["git", "-c", "core.quotePath=off", "log", *args],
             capture_output=True,
             text=True,
+            encoding="utf-8",
+            errors="replace",
             cwd=cwd,
             timeout=30,
         )
@@ -220,23 +236,31 @@ def _git_log(args, cwd=None):
     return out.stdout
 
 
+# Match ``/verify``, ``verify:``, ``verify(...)``, ``verify passed``,
+# ``verify ok`` only when they appear at the START of the commit subject.
+# Substring matching would false-positive on subjects like
+# ``feat(verify): tighten marker`` (which references /verify but is not one).
+_VERIFY_SUBJECT_RE = re.compile(
+    r"^\s*(?:/verify\b|verify[:(]|verify\s+(?:passed|ok)\b)",
+    re.IGNORECASE,
+)
+
+
 def _commits_since_verify(cwd=None):
     """Return commit SHAs (oldest -> newest) authored after the latest
     ``/verify`` marker.
 
-    Heuristic: the marker is a commit whose subject matches ``/verify`` or
-    ``verify:``/``verify(``/``verify passed``. If no such commit is found,
-    return ``[]`` (the detector then has nothing to flag).
+    The marker is a commit whose subject *starts* with ``/verify`` or
+    ``verify:``/``verify(``/``verify passed``/``verify ok``. If no such
+    commit is found, return ``[]`` (the detector then has nothing to flag).
     """
-    log = _git_log(["--reverse", "--format=%H%x09%s", "-n", "200"], cwd=cwd)
+    log = _git_log(["--reverse", "--format=%H%x09%s", "-n", "1000"], cwd=cwd)
     if not log:
         return []
     rows = [line.split("\t", 1) for line in log.splitlines() if "\t" in line]
     verify_idx = None
-    markers = ("/verify", "verify:", "verify(", "verify passed", "verify ok")
     for i, (_sha, subject) in enumerate(rows):
-        s = subject.lower()
-        if any(m in s for m in markers):
+        if _VERIFY_SUBJECT_RE.match(subject):
             verify_idx = i
     if verify_idx is None:
         return []
@@ -248,11 +272,20 @@ def _commit_subject(sha, cwd=None):
 
 
 def _commit_files(sha, cwd=None):
+    # ``_git_log`` runs with ``core.quotePath=off`` so paths arrive raw
+    # (no surrounding quotes, no C-style escapes) regardless of git config.
     out = _git_log(["-1", "--name-only", "--format=", sha], cwd=cwd)
-    return [line.strip().replace("\\", "/") for line in out.splitlines() if line.strip()]
+    return [
+        line.strip().replace("\\", "/")
+        for line in out.splitlines()
+        if line.strip()
+    ]
 
 
 _FIX_PREFIX_RE = ("fix", "bug", "hotfix", "patch", "revert")
+# Lowercase-by-contract: ``_spawns_subprocess`` lowercases the file content
+# before matching, so every hint here must be lowercase. Adding an uppercase
+# hint would silently never match.
 _SUBPROCESS_HINTS = ("subprocess", "claude_dispatch", "spawn", "popen", "claude --bg", "claude -p")
 
 
