@@ -9,6 +9,7 @@ import type {
     ConnectionReferenceViewDto,
     ConnectionReferenceDetailViewDto,
     ConnectionReferencesAnalyzeViewDto,
+    ConnectionPickerOptionDto,
 } from './shared/message-types.js';
 import { assertNever } from './shared/assert-never.js';
 import { getVsCodeApi } from './shared/vscode-api.js';
@@ -316,12 +317,18 @@ function insertInlineDetail(logicalName: string, detail: ConnectionReferenceDeta
     let html = '<div class="cr-detail-card">';
     html += '<div class="cr-detail-grid">';
 
-    // Connection info
+    // Connection info — Change Connection action lives inline so the picker is one click away.
     const connectionLabel = detail.isBound
         ? escapeHtml(detail.connectionOwner ? detail.connectionOwner : 'Bound')
         : escapeHtml('Unbound');
     const connectionClass = detail.isBound ? '' : ' class="status-unbound-text"';
-    html += '<div class="cr-detail-item"><span class="detail-label">Connection:</span> <span' + connectionClass + '>' + connectionLabel + '</span></div>';
+    html += '<div class="cr-detail-item"><span class="detail-label">Connection:</span> <span' + connectionClass + '>' + connectionLabel + '</span> '
+        + '<button type="button" class="cr-bind-btn" data-logical-name="' + escapeAttr(detail.logicalName) + '" '
+        + 'data-connector-id="' + escapeAttr(detail.connectorId ?? '') + '" '
+        + 'data-managed="' + (detail.isManaged ? '1' : '0') + '" '
+        + (detail.isManaged ? 'disabled title="Managed connection references cannot be rebound from the panel."' : 'title="Pick a connection to bind"')
+        + '>' + (detail.isBound ? 'Change…' : 'Bind…') + '</button>'
+        + '</div>';
 
     // Connector
     html += '<div class="cr-detail-item"><span class="detail-label">Connector:</span> <span>' + escapeHtml(detail.connectorDisplayName ?? detail.connectorId ?? '\u2014') + '</span></div>';
@@ -398,8 +405,154 @@ function insertInlineDetail(logicalName: string, detail: ConnectionReferenceDeta
         });
     });
 
+    // Wire Change/Bind button to open the connection picker (issue #592).
+    td.querySelectorAll<HTMLButtonElement>('.cr-bind-btn').forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.stopPropagation();
+            if (btn.disabled) return;
+            const logicalName = btn.dataset.logicalName ?? '';
+            const connectorId = btn.dataset.connectorId || null;
+            openConnectionPicker(logicalName, connectorId, detail.connectionId);
+        });
+    });
+
     tr.appendChild(td);
     row.after(tr);
+}
+
+// ── Connection picker dialog (issue #592) ──
+let pickerState: {
+    logicalName: string;
+    connectorId: string | null;
+    currentConnectionId: string | null | undefined;
+    options: ConnectionPickerOptionDto[];
+} | null = null;
+let pickerKeydownHandler: ((e: KeyboardEvent) => void) | null = null;
+
+function openConnectionPicker(logicalName: string, connectorId: string | null, currentConnectionId: string | null | undefined): void {
+    pickerState = { logicalName, connectorId, currentConnectionId, options: [] };
+    renderPickerLoading(logicalName);
+    // Escape closes the modal — universal expectation; helps keyboard-only users.
+    pickerKeydownHandler = (e: KeyboardEvent) => {
+        if (e.key === 'Escape' && pickerState) {
+            e.preventDefault();
+            closeConnectionPicker();
+        }
+    };
+    document.addEventListener('keydown', pickerKeydownHandler);
+    vscode.postMessage({ command: 'requestConnections', logicalName, connectorId });
+}
+
+function closeConnectionPicker(): void {
+    pickerState = null;
+    if (pickerKeydownHandler) {
+        document.removeEventListener('keydown', pickerKeydownHandler);
+        pickerKeydownHandler = null;
+    }
+    const overlay = document.getElementById('cr-picker-overlay');
+    if (overlay) overlay.remove();
+}
+
+function renderPickerLoading(logicalName: string): void {
+    let overlay = document.getElementById('cr-picker-overlay');
+    if (!overlay) {
+        overlay = document.createElement('div');
+        overlay.id = 'cr-picker-overlay';
+        overlay.className = 'cr-picker-overlay';
+        document.body.appendChild(overlay);
+        overlay.addEventListener('click', (e) => {
+            if (e.target === overlay) closeConnectionPicker();
+        });
+    }
+    overlay.innerHTML =
+        '<div class="cr-picker-dialog" role="dialog" aria-modal="true" aria-label="Connection picker">'
+        + '<div class="cr-picker-header">Bind connection to <code>' + escapeHtml(logicalName) + '</code></div>'
+        + '<div class="cr-picker-body"><div class="loading-state"><div class="spinner"></div><div>Loading connections…</div></div></div>'
+        + '<div class="cr-picker-footer">'
+        + '<button type="button" id="cr-picker-cancel">Cancel</button>'
+        + '</div>'
+        + '</div>';
+    const cancel = document.getElementById('cr-picker-cancel');
+    if (cancel) cancel.addEventListener('click', closeConnectionPicker);
+}
+
+function renderPickerOptions(): void {
+    if (!pickerState) return;
+    const overlay = document.getElementById('cr-picker-overlay');
+    if (!overlay) return;
+
+    const { logicalName, connectorId, currentConnectionId, options } = pickerState;
+
+    // Show the connector name (last segment) plus the friendly name if any
+    // connection carries one. The full admin-scoped URL is noisy for users.
+    const friendlyConnector = options.find(o => o.connectorDisplayName)?.connectorDisplayName ?? null;
+    const connectorSuffix = (() => {
+        const src = connectorId ?? options[0]?.connectorId ?? '';
+        const apiSlash = src.lastIndexOf('/apis/');
+        return apiSlash >= 0 ? src.substring(apiSlash + '/apis/'.length) : src;
+    })();
+    const connectorLabel = friendlyConnector
+        ? friendlyConnector + ' (' + connectorSuffix + ')'
+        : connectorSuffix;
+
+    let body = '';
+    if (options.length === 0) {
+        body = '<div class="empty-state">No connections found for connector <code>'
+            + escapeHtml(connectorLabel)
+            + '</code>. Create one in the Maker Portal first.</div>';
+    } else {
+        body += '<label for="cr-picker-select" class="cr-picker-label">Connection</label>';
+        body += '<select id="cr-picker-select" class="cr-picker-select">';
+        body += '<option value="">— Unbind (no connection) —</option>';
+        for (const opt of options) {
+            const selected = opt.connectionId === currentConnectionId ? ' selected' : '';
+            const status = opt.status ? ' [' + opt.status + ']' : '';
+            const shared = opt.isShared ? ' (shared)' : '';
+            const label = (opt.displayName ?? opt.connectionId) + status + shared;
+            body += '<option value="' + escapeAttr(opt.connectionId) + '"' + selected + '>'
+                + escapeHtml(label) + '</option>';
+        }
+        body += '</select>';
+        body += '<div class="cr-picker-hint">Filtered by connector <code>'
+            + escapeHtml(connectorLabel)
+            + '</code>. Selecting the empty option clears the binding.</div>';
+    }
+
+    overlay.innerHTML =
+        '<div class="cr-picker-dialog" role="dialog" aria-modal="true" aria-label="Connection picker">'
+        + '<div class="cr-picker-header">Bind connection to <code>' + escapeHtml(logicalName) + '</code></div>'
+        + '<div class="cr-picker-body">' + body + '</div>'
+        + '<div class="cr-picker-footer">'
+        + '<button type="button" id="cr-picker-cancel">Cancel</button>'
+        + (options.length > 0
+            ? '<button type="button" id="cr-picker-save" class="cr-picker-primary">Save</button>'
+            : '')
+        + '</div>'
+        + '</div>';
+
+    const overlayEl = document.getElementById('cr-picker-overlay');
+    if (overlayEl) {
+        overlayEl.addEventListener('click', (e) => {
+            if (e.target === overlayEl) closeConnectionPicker();
+        });
+    }
+    const cancel = document.getElementById('cr-picker-cancel');
+    if (cancel) cancel.addEventListener('click', closeConnectionPicker);
+    const save = document.getElementById('cr-picker-save');
+    const select = document.getElementById('cr-picker-select') as HTMLSelectElement | null;
+    if (save && select) {
+        save.addEventListener('click', () => {
+            const value = select.value;
+            const newConnectionId = value === '' ? null : value;
+            (save as HTMLButtonElement).disabled = true;
+            save.textContent = 'Saving…';
+            vscode.postMessage({
+                command: 'bindConnection',
+                logicalName,
+                connectionId: newConnectionId,
+            });
+        });
+    }
 }
 
 // ── Button handlers ──
@@ -539,9 +692,58 @@ window.addEventListener('message', (event: MessageEvent<ConnectionReferencesPane
         case 'error':
             (refreshBtn as HTMLButtonElement).disabled = false;
             refreshBtn.textContent = 'Refresh';
-            content.innerHTML = '<div class="error-state">' + escapeHtml(msg.message) + '</div>';
-            statusText.textContent = 'Error';
+            // If the picker is open (bind failed), re-enable Save so the user can retry.
+            if (pickerState) {
+                const save = document.getElementById('cr-picker-save') as HTMLButtonElement | null;
+                if (save) {
+                    save.disabled = false;
+                    save.textContent = 'Save';
+                }
+            }
+            // Preserve loaded table state on operational errors (bind/detail/analyze/sync).
+            // Only replace the main content if the table is empty — i.e. an initial-load failure.
+            if (table.getItems().length === 0) {
+                content.innerHTML = '<div class="error-state">' + escapeHtml(msg.message) + '</div>';
+            }
+            statusText.textContent = 'Error: ' + msg.message;
             break;
+        case 'connectionsLoaded':
+            if (pickerState && pickerState.logicalName === msg.logicalName) {
+                pickerState.options = msg.connections;
+                renderPickerOptions();
+            }
+            break;
+        case 'connectionBound': {
+            currentEnvironmentId = msg.environmentId;
+            rowDetails.set(msg.detail.logicalName, msg.detail);
+
+            // Refresh the main row so the Status badge mirrors the new bound state.
+            const items = table.getItems();
+            const idx = items.findIndex(it => it.logicalName === msg.detail.logicalName);
+            if (idx !== -1) {
+                const updated = {
+                    ...items[idx],
+                    connectionId: msg.detail.connectionId,
+                    connectionStatus: msg.detail.connectionStatus,
+                    connectorDisplayName: msg.detail.connectorDisplayName,
+                    modifiedOn: msg.detail.modifiedOn,
+                    hasHealthWarning: !msg.detail.isBound || msg.detail.connectionStatus?.toLowerCase() === 'error',
+                };
+                const next = items.slice();
+                next[idx] = updated;
+                table.setItems(next);
+                searchFilter.setItems(next);
+            }
+
+            if (expandedRows.has(msg.detail.logicalName)) {
+                insertInlineDetail(msg.detail.logicalName, msg.detail);
+            }
+            closeConnectionPicker();
+            statusText.textContent = msg.detail.isBound
+                ? 'Connection bound to ' + msg.detail.logicalName
+                : 'Connection cleared on ' + msg.detail.logicalName;
+            break;
+        }
         case 'deploymentSettingsSynced':
             (syncBtn as HTMLButtonElement).disabled = false;
             syncBtn.textContent = 'Sync Deployment Settings';

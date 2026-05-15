@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.Extensions.Logging;
 using Microsoft.Xrm.Sdk;
 using Microsoft.Xrm.Sdk.Query;
+using PPDS.Cli.Infrastructure.Errors;
 using PPDS.Cli.Services.Flows;
 using PPDS.Cli.Services.Flows.Utilities;
 using PPDS.Dataverse.Generated;
@@ -118,6 +119,8 @@ public class ConnectionReferenceService : IConnectionReferenceService
     {
         await using var client = await _pool.GetClientAsync(cancellationToken: cancellationToken);
 
+        // Logical name is unique; do not filter by state — the panel's "All"
+        // toggle surfaces inactive refs and Bind must still resolve their Id.
         var query = new QueryExpression(ConnectionReference.EntityLogicalName)
         {
             ColumnSet = new ColumnSet(true),
@@ -127,7 +130,6 @@ public class ConnectionReferenceService : IConnectionReferenceService
             ConnectionReference.Fields.ConnectionReferenceLogicalName,
             ConditionOperator.Equal,
             logicalName);
-        query.Criteria.AddCondition(ConnectionReference.Fields.StateCode, ConditionOperator.Equal, 0);
 
         var results = await client.RetrieveMultipleAsync(query, cancellationToken);
 
@@ -266,6 +268,58 @@ public class ConnectionReferenceService : IConnectionReferenceService
             analysis.OrphanedConnectionReferenceCount);
 
         return analysis;
+    }
+
+    /// <inheritdoc />
+    public async Task<ConnectionReferenceInfo> BindAsync(
+        string logicalName,
+        string? connectionId,
+        CancellationToken cancellationToken = default)
+    {
+        if (string.IsNullOrWhiteSpace(logicalName))
+        {
+            throw new PpdsException(ErrorCodes.Validation.RequiredField, "Connection reference logical name is required.");
+        }
+
+        // Look up the connection reference by logical name to get its Guid.
+        var existing = await GetAsync(logicalName, cancellationToken)
+            ?? throw new PpdsException(
+                ErrorCodes.Operation.NotFound,
+                $"Connection reference '{logicalName}' not found.");
+
+        var normalized = string.IsNullOrWhiteSpace(connectionId) ? null : connectionId.Trim();
+
+        await using var client = await _pool.GetClientAsync(cancellationToken: cancellationToken);
+
+        // Update only the connectionid attribute; let Dataverse keep everything else.
+        var update = new Entity(ConnectionReference.EntityLogicalName, existing.Id)
+        {
+            [ConnectionReference.Fields.ConnectionId] = normalized
+        };
+
+        try
+        {
+            await client.UpdateAsync(update, cancellationToken);
+        }
+        catch (Exception ex) when (ex is not OperationCanceledException && ex is not PpdsException)
+        {
+            _logger.LogError(ex, "Failed to bind connection '{ConnectionId}' to connection reference '{LogicalName}'", normalized, logicalName);
+            throw new PpdsException(
+                ErrorCodes.External.ServiceUnavailable,
+                $"Failed to bind connection to '{logicalName}': {ex.Message}",
+                ex);
+        }
+
+        _logger.LogInformation(
+            "Bound connection '{ConnectionId}' to connection reference '{LogicalName}'",
+            normalized ?? "(cleared)",
+            logicalName);
+
+        // Re-read by Id so callers get the freshly persisted state without a second logical-name query.
+        return await GetByIdAsync(existing.Id, cancellationToken)
+            ?? throw new PpdsException(
+                ErrorCodes.Operation.NotFound,
+                $"Connection reference '{logicalName}' disappeared after update.");
     }
 
     private static ConnectionReferenceInfo MapToInfo(Entity entity)
