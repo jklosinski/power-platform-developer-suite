@@ -246,6 +246,37 @@ class TestCiTimeoutConfig:
         assert result == "pass"
 
 
+class TestGeminiTimeoutConfig:
+    """#1127: Gemini timeout is configurable via flag and env var."""
+
+    def test_default_is_1800(self):
+        """GEMINI_MAX_WAIT default is 1800 seconds (30 min)."""
+        assert pr_monitor.GEMINI_MAX_WAIT == 1800
+
+    def test_resolve_default_when_no_override(self):
+        """_resolve_gemini_timeout_sec returns (1800, 'default') with no flag or env."""
+        env = {k: v for k, v in os.environ.items()
+               if k != "PPDS_PR_MONITOR_GEMINI_TIMEOUT"}
+        with patch.dict(os.environ, env, clear=True):
+            val, source = pr_monitor._resolve_gemini_timeout_sec(None)
+        assert val == 1800
+        assert source == "default"
+
+    def test_resolve_env_wins_over_default(self):
+        """_resolve_gemini_timeout_sec returns env value when flag is absent."""
+        with patch.dict(os.environ, {"PPDS_PR_MONITOR_GEMINI_TIMEOUT": "600"}):
+            val, source = pr_monitor._resolve_gemini_timeout_sec(None)
+        assert val == 600
+        assert source == "env"
+
+    def test_resolve_flag_wins_over_env(self):
+        """Flag value takes precedence over PPDS_PR_MONITOR_GEMINI_TIMEOUT env var."""
+        with patch.dict(os.environ, {"PPDS_PR_MONITOR_GEMINI_TIMEOUT": "600"}):
+            val, source = pr_monitor._resolve_gemini_timeout_sec(300)
+        assert val == 300
+        assert source == "flag"
+
+
 class TestTerminalNotifications:
     """Monitor fires run_notify on every terminal state (success + failures)."""
 
@@ -479,6 +510,7 @@ class TestRepollCi:
              patch("pr_monitor.run_triage", return_value=[
                  {"id": 1, "action": "fixed", "description": "done", "commit": "abc"}
              ]), \
+             patch("pr_monitor._ready_flip_gates", return_value=(True, [])), \
              patch("pr_monitor.mark_pr_ready", return_value=True), \
              patch("pr_monitor.run_retro", return_value="done"), \
              patch("pr_monitor.run_notify"):
@@ -596,6 +628,7 @@ class TestResultJsonSchema:
 
         with patch("pr_monitor.poll_ci", return_value="pass"), \
              patch("pr_monitor.poll_gemini_comments", return_value=[]), \
+             patch("pr_monitor._ready_flip_gates", return_value=(True, [])), \
              patch("pr_monitor.mark_pr_ready", return_value=True), \
              patch("pr_monitor.run_retro", return_value="done"), \
              patch("pr_monitor.run_notify"):
@@ -617,6 +650,7 @@ class TestResultJsonSchema:
 
         with patch("pr_monitor.poll_ci", return_value="pass"), \
              patch("pr_monitor.poll_gemini_comments", return_value=[]), \
+             patch("pr_monitor._ready_flip_gates", return_value=(True, [])), \
              patch("pr_monitor.mark_pr_ready", return_value=True), \
              patch("pr_monitor.run_retro", return_value="done"), \
              patch("pr_monitor.run_notify"):
@@ -630,7 +664,7 @@ class TestResultJsonSchema:
 
 
 class TestGeminiTimeout:
-    """AC-126: Gemini polling stops after GEMINI_MAX_WAIT (5 min).
+    """AC-126: Gemini polling stops after GEMINI_MAX_WAIT (30 min, bumped from 5 per #1127).
 
     Updated for v1-prelaunch retro item #3: poll_gemini_comments now
     delegates to triage_common.poll_gemini_review which polls 3 endpoints.
@@ -978,7 +1012,7 @@ class TestReadyFlipGates:
         assert result["steps_completed"]["ready"]["status"] == "skipped"
 
     def test_ready_flip_skipped_when_no_gemini_review(self, tmp_path):
-        """No Gemini review means no flip."""
+        """No Gemini review raises _GeminiTimeoutError for escalation (#1127)."""
         wt = _make_worktree(tmp_path)
         logger = _make_logger(tmp_path)
         result = self._base_result(gemini_review_posted=False)
@@ -986,11 +1020,14 @@ class TestReadyFlipGates:
         with patch("pr_monitor.get_unreplied_comments", return_value=[]), \
              patch("pr_monitor._rebase_source_branch") as mock_rebase, \
              patch("pr_monitor.mark_pr_ready") as mock_ready, \
-             patch("pr_monitor.run_notify"):
-            pr_monitor._step_ready(wt, 42, logger, result)
+             patch("pr_monitor.run_notify") as mock_notify:
+            with pytest.raises(pr_monitor._GeminiTimeoutError):
+                pr_monitor._step_ready(wt, 42, logger, result)
 
         mock_rebase.assert_not_called()
         mock_ready.assert_not_called()
+        mock_notify.assert_not_called()
+        # State is written before the raise.
         assert result["steps_completed"]["ready"]["status"] == "skipped"
         assert "gemini_review_not_posted" in result["ready_skip_reasons"]
 
