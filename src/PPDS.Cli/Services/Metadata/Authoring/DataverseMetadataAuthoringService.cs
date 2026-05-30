@@ -1194,7 +1194,8 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
                     ?? statusOpt.Label?.LocalizedLabels?.FirstOrDefault()?.Label
                     ?? "",
                 StateCode = statusOpt.State ?? 0,
-                StateLabel = (statusOpt.State ?? 0) == 0 ? "Active" : "Inactive",
+                // Standard Dataverse entities use 0=Active, 1=Inactive; custom multi-state entities (state code >1) are out of scope for #1160
+                StateLabel = (statusOpt.State ?? 0) switch { 0 => "Active", 1 => "Inactive", var n => $"State{n}" },
                 Color = statusOpt.Color
             });
         }
@@ -1219,14 +1220,17 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
         int targetValue;
         string? currentLabel = null;
 
+        // Always list to get currentLabel — prevents blank-label clobber when NewLabel is null
+        var statusReasons = await ListStatusReasonsAsync(request.EntityLogicalName, ct).ConfigureAwait(false);
+
         if (request.Value.HasValue)
         {
             targetValue = request.Value.Value;
+            currentLabel = statusReasons.FirstOrDefault(r => r.Value == targetValue)?.Label;
         }
         else
         {
-            var reasons = await ListStatusReasonsAsync(request.EntityLogicalName, ct).ConfigureAwait(false);
-            var match = reasons.FirstOrDefault(r => string.Equals(r.Label, request.Label, StringComparison.OrdinalIgnoreCase));
+            var match = statusReasons.FirstOrDefault(r => string.Equals(r.Label, request.Label, StringComparison.OrdinalIgnoreCase));
             if (match == null)
                 throw new MetadataValidationException(
                     MetadataErrorCodes.OptionNotFound,
@@ -1250,7 +1254,7 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
         sdkRequest["AttributeLogicalName"] = "statuscode";
 
         if (!string.IsNullOrEmpty(request.Color))
-            sdkRequest.Description = new Label(request.Color, 1033);
+            sdkRequest["Color"] = request.Color;
 
         await using var client = await _connectionPool.GetClientAsync(cancellationToken: ct).ConfigureAwait(false);
         await client.ExecuteAsync(sdkRequest, ct).ConfigureAwait(false);
@@ -1728,36 +1732,35 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
         if (_publisherOptionValuePrefixCache.TryGetValue(solutionUniqueName, out var cached))
             return cached;
 
-        await using var client = await _connectionPool.GetClientAsync(cancellationToken: ct).ConfigureAwait(false);
-
-        var solutionQuery = new QueryExpression("solution")
+        // D2: acquire, use, release per query — never hold a client across multiple operations
+        Guid publisherId;
         {
-            ColumnSet = new ColumnSet("publisherid"),
-            Criteria = { Conditions = { new ConditionExpression("uniquename", ConditionOperator.Equal, solutionUniqueName) } }
-        };
+            await using var client = await _connectionPool.GetClientAsync(cancellationToken: ct).ConfigureAwait(false);
+            var solutionQuery = new QueryExpression("solution")
+            {
+                ColumnSet = new ColumnSet("publisherid"),
+                Criteria = { Conditions = { new ConditionExpression("uniquename", ConditionOperator.Equal, solutionUniqueName) } }
+            };
+            var solutionResult = await client.RetrieveMultipleAsync(solutionQuery, ct).ConfigureAwait(false);
+            if (solutionResult.Entities.Count == 0)
+                throw new MetadataValidationException(MetadataErrorCodes.EntityNotFound, $"Solution '{solutionUniqueName}' not found.", "SolutionUniqueName");
+            publisherId = solutionResult.Entities[0].GetAttributeValue<EntityReference>("publisherid").Id;
+        }
 
-        var solutionResult = await client.RetrieveMultipleAsync(solutionQuery, ct).ConfigureAwait(false);
-
-        if (solutionResult.Entities.Count == 0)
-            throw new MetadataValidationException(MetadataErrorCodes.EntityNotFound, $"Solution '{solutionUniqueName}' not found.", "SolutionUniqueName");
-
-        var publisherId = solutionResult.Entities[0].GetAttributeValue<EntityReference>("publisherid").Id;
-
-        var publisherQuery = new QueryExpression("publisher")
         {
-            ColumnSet = new ColumnSet("customizationoptionvalueprefix"),
-            Criteria = { Conditions = { new ConditionExpression("publisherid", ConditionOperator.Equal, publisherId) } }
-        };
-
-        var publisherResult = await client.RetrieveMultipleAsync(publisherQuery, ct).ConfigureAwait(false);
-
-        if (publisherResult.Entities.Count == 0)
-            throw new MetadataValidationException(MetadataErrorCodes.EntityNotFound, $"Publisher for solution '{solutionUniqueName}' not found.", "SolutionUniqueName");
-
-        var prefix = publisherResult.Entities[0].GetAttributeValue<int>("customizationoptionvalueprefix");
-        _publisherOptionValuePrefixCache[solutionUniqueName] = prefix;
-
-        return prefix;
+            await using var client = await _connectionPool.GetClientAsync(cancellationToken: ct).ConfigureAwait(false);
+            var publisherQuery = new QueryExpression("publisher")
+            {
+                ColumnSet = new ColumnSet("customizationoptionvalueprefix"),
+                Criteria = { Conditions = { new ConditionExpression("publisherid", ConditionOperator.Equal, publisherId) } }
+            };
+            var publisherResult = await client.RetrieveMultipleAsync(publisherQuery, ct).ConfigureAwait(false);
+            if (publisherResult.Entities.Count == 0)
+                throw new MetadataValidationException(MetadataErrorCodes.EntityNotFound, $"Publisher for solution '{solutionUniqueName}' not found.", "SolutionUniqueName");
+            var prefix = publisherResult.Entities[0].GetAttributeValue<int>("customizationoptionvalueprefix");
+            _publisherOptionValuePrefixCache[solutionUniqueName] = prefix;
+            return prefix;
+        }
     }
 
     private async Task PublishEntityInternalAsync(string entityLogicalName, CancellationToken ct)

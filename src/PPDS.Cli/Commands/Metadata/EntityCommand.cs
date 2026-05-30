@@ -1015,16 +1015,16 @@ public static class EntityCommand
             }
             else
             {
-                Console.WriteLine();
-                Console.WriteLine($"Status Reasons for '{entity}' ({reasons.Count}):");
-                Console.WriteLine();
-                Console.WriteLine($"  {"Value",-8} {"State",-10} {"Label",-40} {"Color"}");
-                Console.WriteLine($"  {new string('-', 8),-8} {new string('-', 10),-10} {new string('-', 40),-40} {new string('-', 10)}");
+                Console.Error.WriteLine();
+                Console.Error.WriteLine($"Status Reasons for '{entity}' ({reasons.Count}):");
+                Console.Error.WriteLine();
+                Console.Error.WriteLine($"  {"Value",-8} {"State",-10} {"Label",-40} {"Color"}");
+                Console.Error.WriteLine($"  {new string('-', 8),-8} {new string('-', 10),-10} {new string('-', 40),-40} {new string('-', 10)}");
 
                 foreach (var reason in reasons.OrderBy(r => r.StateCode).ThenBy(r => r.Value))
                 {
                     var colorDisplay = reason.Color ?? "";
-                    Console.WriteLine($"  {reason.Value,-8} {reason.StateLabel,-10} {reason.Label,-40} {colorDisplay}");
+                    Console.Error.WriteLine($"  {reason.Value,-8} {reason.StateLabel,-10} {reason.Label,-40} {colorDisplay}");
                 }
             }
 
