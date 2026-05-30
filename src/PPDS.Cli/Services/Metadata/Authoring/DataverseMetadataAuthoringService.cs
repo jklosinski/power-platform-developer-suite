@@ -1275,7 +1275,17 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
             sdkRequest["Color"] = request.Color;
 
         await using var client = await _connectionPool.GetClientAsync(cancellationToken: ct).ConfigureAwait(false);
-        await client.ExecuteAsync(sdkRequest, ct).ConfigureAwait(false);
+        try
+        {
+            await client.ExecuteAsync(sdkRequest, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not PpdsException and not MetadataValidationException)
+        {
+            throw new PpdsException(
+                MetadataErrorCodes.SdkOperationFailed,
+                $"Failed to update status reason (value {targetValue}) on '{request.EntityLogicalName}': {ex.Message}",
+                ex);
+        }
 
         _logger?.LogInformation("Updated status reason (value {Value}) on '{Entity}'", targetValue, request.EntityLogicalName);
 
@@ -1332,7 +1342,17 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
         sdkRequest["AttributeLogicalName"] = "statuscode";
 
         await using var client = await _connectionPool.GetClientAsync(cancellationToken: ct).ConfigureAwait(false);
-        await client.ExecuteAsync(sdkRequest, ct).ConfigureAwait(false);
+        try
+        {
+            await client.ExecuteAsync(sdkRequest, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not PpdsException and not MetadataValidationException)
+        {
+            throw new PpdsException(
+                MetadataErrorCodes.SdkOperationFailed,
+                $"Failed to remove status reason (value {targetValue}) from '{request.EntityLogicalName}': {ex.Message}",
+                ex);
+        }
 
         _logger?.LogInformation("Removed status reason (value {Value}) from '{Entity}'", targetValue, request.EntityLogicalName);
 
