@@ -282,6 +282,41 @@ public class MetadataStatusReasonServiceTests
     }
 
     [Fact]
+    public async Task UpdateStatusReasonAsync_ByValueNotFound_ThrowsOptionNotFound()
+    {
+        SetupListStatusReasons("account", [(1, "Active", 0)]);
+
+        var request = new UpdateStatusReasonRequest
+        {
+            EntityLogicalName = "account",
+            Value = 999,
+            NewLabel = "Updated"
+        };
+
+        var act = async () => await _service.UpdateStatusReasonAsync(request);
+
+        await act.Should().ThrowAsync<MetadataValidationException>()
+            .Where(e => e.ErrorCode == MetadataErrorCodes.OptionNotFound);
+    }
+
+    [Fact]
+    public async Task RemoveStatusReasonAsync_ByValueNotFound_ThrowsOptionNotFound()
+    {
+        SetupListStatusReasons("account", [(1, "Active", 0)]);
+
+        var request = new RemoveStatusReasonRequest
+        {
+            EntityLogicalName = "account",
+            Value = 999
+        };
+
+        var act = async () => await _service.RemoveStatusReasonAsync(request);
+
+        await act.Should().ThrowAsync<MetadataValidationException>()
+            .Where(e => e.ErrorCode == MetadataErrorCodes.OptionNotFound);
+    }
+
+    [Fact]
     public async Task AddStatusReasonAsync_DryRun_DoesNotCallSdk()
     {
         SetupListStatusReasons("account", []);

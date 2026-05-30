@@ -1142,8 +1142,19 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
         if (!string.IsNullOrEmpty(request.Color))
             sdkRequest["Color"] = request.Color;
 
-        await using var client = await _connectionPool.GetClientAsync(cancellationToken: ct).ConfigureAwait(false);
-        var response = (InsertStatusValueResponse)await client.ExecuteAsync(sdkRequest, ct).ConfigureAwait(false);
+        InsertStatusValueResponse response;
+        try
+        {
+            await using var client = await _connectionPool.GetClientAsync(cancellationToken: ct).ConfigureAwait(false);
+            response = (InsertStatusValueResponse)await client.ExecuteAsync(sdkRequest, ct).ConfigureAwait(false);
+        }
+        catch (Exception ex) when (ex is not PpdsException and not MetadataValidationException)
+        {
+            throw new PpdsException(
+                MetadataErrorCodes.SdkOperationFailed,
+                $"Failed to add status reason '{request.Label}' to '{request.EntityLogicalName}': {ex.Message}",
+                ex);
+        }
 
         _logger?.LogInformation("Added status reason '{Label}' with value {Value} to '{Entity}'", request.Label, response.NewOptionValue, request.EntityLogicalName);
 
@@ -1177,7 +1188,8 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
             throw new PpdsException(MetadataErrorCodes.EntityNotFound, $"Could not retrieve statuscode attribute for '{entityLogicalName}': {ex.Message}", ex);
         }
 
-        if (((RetrieveAttributeResponse)retrieveResponse).AttributeMetadata is not StatusAttributeMetadata statusAttr
+        if (retrieveResponse is not RetrieveAttributeResponse retrieveAttrResponse
+            || retrieveAttrResponse.AttributeMetadata is not StatusAttributeMetadata statusAttr
             || statusAttr.OptionSet?.Options == null)
             return Array.Empty<StatusReasonInfo>();
 
@@ -1226,7 +1238,13 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
         if (request.Value.HasValue)
         {
             targetValue = request.Value.Value;
-            currentLabel = statusReasons.FirstOrDefault(r => r.Value == targetValue)?.Label;
+            var valueMatch = statusReasons.FirstOrDefault(r => r.Value == targetValue);
+            if (valueMatch == null)
+                throw new MetadataValidationException(
+                    MetadataErrorCodes.OptionNotFound,
+                    $"Status reason with value {targetValue} not found on '{request.EntityLogicalName}'.",
+                    "Value");
+            currentLabel = valueMatch.Label;
         }
         else
         {
@@ -1279,16 +1297,22 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
                 "Provide --value or --label to identify the target status reason.",
                 "Value");
 
+        var removeReasons = await ListStatusReasonsAsync(request.EntityLogicalName, ct).ConfigureAwait(false);
+
         int targetValue;
 
         if (request.Value.HasValue)
         {
             targetValue = request.Value.Value;
+            if (!removeReasons.Any(r => r.Value == targetValue))
+                throw new MetadataValidationException(
+                    MetadataErrorCodes.OptionNotFound,
+                    $"Status reason with value {targetValue} not found on '{request.EntityLogicalName}'.",
+                    "Value");
         }
         else
         {
-            var reasons = await ListStatusReasonsAsync(request.EntityLogicalName, ct).ConfigureAwait(false);
-            var match = reasons.FirstOrDefault(r => string.Equals(r.Label, request.Label, StringComparison.OrdinalIgnoreCase));
+            var match = removeReasons.FirstOrDefault(r => string.Equals(r.Label, request.Label, StringComparison.OrdinalIgnoreCase));
             if (match == null)
                 throw new MetadataValidationException(
                     MetadataErrorCodes.OptionNotFound,
