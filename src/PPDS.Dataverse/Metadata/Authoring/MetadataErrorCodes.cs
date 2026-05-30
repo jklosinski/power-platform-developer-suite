@@ -43,4 +43,7 @@ public static class MetadataErrorCodes
 
     /// <summary>Deletion is blocked by existing dependencies.</summary>
     public const string DependencyConflict = "DEPENDENCY_CONFLICT";
+
+    /// <summary>The targeted status reason or local option was not found by value or label.</summary>
+    public const string OptionNotFound = "OPTION_NOT_FOUND";
 }

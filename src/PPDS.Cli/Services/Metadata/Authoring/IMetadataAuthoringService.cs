@@ -1,3 +1,4 @@
+using System.Collections.Generic;
 using System.Threading;
 using System.Threading.Tasks;
 using PPDS.Dataverse.Metadata.Authoring;
@@ -82,4 +83,18 @@ public interface IMetadataAuthoringService
 
     /// <summary>Reactivates a failed alternate key.</summary>
     Task ReactivateKeyAsync(ReactivateKeyRequest request, CancellationToken ct = default);
+
+    // Status Reasons
+
+    /// <summary>Adds a status reason (statuscode option value) to an entity.</summary>
+    Task<int> AddStatusReasonAsync(AddStatusReasonRequest request, IMetadataAuthoringProgressReporter? reporter = null, CancellationToken ct = default);
+
+    /// <summary>Lists all status reasons for an entity's statuscode attribute.</summary>
+    Task<IReadOnlyList<StatusReasonInfo>> ListStatusReasonsAsync(string entityLogicalName, CancellationToken ct = default);
+
+    /// <summary>Updates an existing status reason on an entity.</summary>
+    Task UpdateStatusReasonAsync(UpdateStatusReasonRequest request, CancellationToken ct = default);
+
+    /// <summary>Removes a status reason from an entity's statuscode attribute.</summary>
+    Task RemoveStatusReasonAsync(RemoveStatusReasonRequest request, CancellationToken ct = default);
 }
