@@ -162,7 +162,7 @@ public static class AttributeCommandGroup
             DefaultValueFactory = _ => false
         };
 
-        var command = new Command("create", "Create a new attribute on a Dataverse table")
+        var command = new Command("create", "Create a new attribute on a Dataverse table (for Choice/Choices columns use --option to define a local option set, or --choice to attach a global one)")
         {
             solutionOption,
             entityOption,
@@ -858,10 +858,11 @@ public static class AttributeCommandGroup
         var columnOption = new Option<string>("--column", "-c") { Description = "Logical name of the Choice/Choices column", Required = true };
         var optionOption = new Option<string>("--option") { Description = "Option to add: \"Label[:Value][:#Color]\"", Required = true };
         var publishOption = new Option<bool>("--publish") { Description = "Publish the entity after the change", DefaultValueFactory = _ => false };
+        var dryRunOption = new Option<bool>("--dry-run") { Description = "Validate only, do not persist changes", DefaultValueFactory = _ => false };
 
         var command = new Command("add-option", "Add an option to a column's local option set")
         {
-            solutionOption, entityOption, columnOption, optionOption, publishOption,
+            solutionOption, entityOption, columnOption, optionOption, publishOption, dryRunOption,
             MetadataCommandGroup.ProfileOption, MetadataCommandGroup.EnvironmentOption
         };
         GlobalOptions.AddToCommand(command);
@@ -873,6 +874,7 @@ public static class AttributeCommandGroup
             var column = parseResult.GetValue(columnOption)!;
             var spec = parseResult.GetValue(optionOption)!;
             var publish = parseResult.GetValue(publishOption);
+            var dryRun = parseResult.GetValue(dryRunOption);
             var profile = parseResult.GetValue(MetadataCommandGroup.ProfileOption);
             var environment = parseResult.GetValue(MetadataCommandGroup.EnvironmentOption);
             var globalOptions = GlobalOptions.GetValues(parseResult);
@@ -915,11 +917,14 @@ public static class AttributeCommandGroup
                     Value = value,
                     Color = color,
                     SolutionUniqueName = solution,
-                    Publish = publish
+                    Publish = publish,
+                    DryRun = dryRun
                 }, cancellationToken);
 
                 if (globalOptions.IsJsonMode)
-                    writer.WriteSuccess(new { entity, column, label, value = assigned });
+                    writer.WriteSuccess(new { entity, column, label, value = assigned, dryRun });
+                else if (dryRun)
+                    Console.Error.WriteLine("[Dry-Run] Validation passed. No changes persisted.");
                 else
                     Console.Error.WriteLine($"Option '{label}' added to '{entity}.{column}' with value {assigned}.");
 
@@ -950,10 +955,11 @@ public static class AttributeCommandGroup
         var newLabelOption = new Option<string?>("--new-label") { Description = "New label to apply" };
         var colorOption = new Option<string?>("--color") { Description = "New hex color (e.g. #FF0000)" };
         var publishOption = new Option<bool>("--publish") { Description = "Publish the entity after the change", DefaultValueFactory = _ => false };
+        var dryRunOption = new Option<bool>("--dry-run") { Description = "Validate only, do not persist changes", DefaultValueFactory = _ => false };
 
         var command = new Command("update-option", "Update an option (label/color) on a column's local option set")
         {
-            solutionOption, entityOption, columnOption, valueOption, labelOption, newLabelOption, colorOption, publishOption,
+            solutionOption, entityOption, columnOption, valueOption, labelOption, newLabelOption, colorOption, publishOption, dryRunOption,
             MetadataCommandGroup.ProfileOption, MetadataCommandGroup.EnvironmentOption
         };
         GlobalOptions.AddToCommand(command);
@@ -968,6 +974,7 @@ public static class AttributeCommandGroup
             var newLabel = parseResult.GetValue(newLabelOption);
             var color = parseResult.GetValue(colorOption);
             var publish = parseResult.GetValue(publishOption);
+            var dryRun = parseResult.GetValue(dryRunOption);
             var profile = parseResult.GetValue(MetadataCommandGroup.ProfileOption);
             var environment = parseResult.GetValue(MetadataCommandGroup.EnvironmentOption);
             var globalOptions = GlobalOptions.GetValues(parseResult);
@@ -1007,11 +1014,14 @@ public static class AttributeCommandGroup
                     NewLabel = newLabel,
                     Color = color,
                     SolutionUniqueName = solution,
-                    Publish = publish
+                    Publish = publish,
+                    DryRun = dryRun
                 }, cancellationToken);
 
                 if (globalOptions.IsJsonMode)
-                    writer.WriteSuccess(new { entity, column, updated = true });
+                    writer.WriteSuccess(new { entity, column, updated = true, dryRun });
+                else if (dryRun)
+                    Console.Error.WriteLine("[Dry-Run] Validation passed. No changes persisted.");
                 else
                     Console.Error.WriteLine($"Option on '{entity}.{column}' updated successfully.");
 
@@ -1041,10 +1051,11 @@ public static class AttributeCommandGroup
         var labelOption = new Option<string?>("--label") { Description = "Target option by label (mutually exclusive with --value)" };
         var forceOption = new Option<bool>("--force") { Description = "Skip confirmation prompt", DefaultValueFactory = _ => false };
         var publishOption = new Option<bool>("--publish") { Description = "Publish the entity after the change", DefaultValueFactory = _ => false };
+        var dryRunOption = new Option<bool>("--dry-run") { Description = "Validate that the target option exists, without removing it", DefaultValueFactory = _ => false };
 
         var command = new Command("remove-option", "Remove an option from a column's local option set")
         {
-            solutionOption, entityOption, columnOption, valueOption, labelOption, forceOption, publishOption,
+            solutionOption, entityOption, columnOption, valueOption, labelOption, forceOption, publishOption, dryRunOption,
             MetadataCommandGroup.ProfileOption, MetadataCommandGroup.EnvironmentOption
         };
         GlobalOptions.AddToCommand(command);
@@ -1058,6 +1069,7 @@ public static class AttributeCommandGroup
             var label = parseResult.GetValue(labelOption);
             var force = parseResult.GetValue(forceOption);
             var publish = parseResult.GetValue(publishOption);
+            var dryRun = parseResult.GetValue(dryRunOption);
             var profile = parseResult.GetValue(MetadataCommandGroup.ProfileOption);
             var environment = parseResult.GetValue(MetadataCommandGroup.EnvironmentOption);
             var globalOptions = GlobalOptions.GetValues(parseResult);
@@ -1076,7 +1088,7 @@ public static class AttributeCommandGroup
 
             var target = value.HasValue ? $"value {value}" : $"label '{label}'";
 
-            if (!force)
+            if (!force && !dryRun)
             {
                 if (!Console.IsInputRedirected)
                 {
@@ -1119,11 +1131,14 @@ public static class AttributeCommandGroup
                     Value = value,
                     Label = label,
                     SolutionUniqueName = solution,
-                    Publish = publish
+                    Publish = publish,
+                    DryRun = dryRun
                 }, cancellationToken);
 
                 if (globalOptions.IsJsonMode)
-                    writer.WriteSuccess(new { entity, column, removed = true });
+                    writer.WriteSuccess(new { entity, column, removed = !dryRun, dryRun });
+                else if (dryRun)
+                    Console.Error.WriteLine("[Dry-Run] Validation passed. Option exists and can be removed.");
                 else
                     Console.Error.WriteLine($"Option ({target}) removed from '{entity}.{column}'.");
 

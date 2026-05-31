@@ -23,4 +23,7 @@ public sealed class RemoveColumnOptionRequest
 
     /// <summary>Gets or sets whether to publish the entity after the change.</summary>
     public bool Publish { get; set; }
+
+    /// <summary>Gets or sets whether to validate only, without persisting changes.</summary>
+    public bool DryRun { get; set; }
 }

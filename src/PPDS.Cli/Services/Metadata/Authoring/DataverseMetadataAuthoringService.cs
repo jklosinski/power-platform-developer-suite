@@ -1453,6 +1453,12 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
 
         var value = OptionValueDeriver.Derive(request.Value, optionPrefix, existingValues);
 
+        if (request.DryRun)
+        {
+            _logger?.LogInformation("Dry-run: AddColumnOption '{Label}' to '{Entity}.{Column}' validated (derived value {Value})", request.Label, request.EntityLogicalName, request.ColumnLogicalName, value);
+            return value;
+        }
+
         var sdkRequest = new InsertOptionValueRequest
         {
             Label = new Label(request.Label, 1033),
@@ -1499,6 +1505,12 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
         var options = await ListColumnOptionsAsync(request.EntityLogicalName, request.ColumnLogicalName, ct).ConfigureAwait(false);
         var target = ResolveColumnOption(options, request.Value, request.Label, request.EntityLogicalName, request.ColumnLogicalName);
 
+        if (request.DryRun)
+        {
+            _logger?.LogInformation("Dry-run: UpdateColumnOption (value {Value}) on '{Entity}.{Column}' validated", target.Value, request.EntityLogicalName, request.ColumnLogicalName);
+            return;
+        }
+
         var sdkRequest = new SdkUpdateOptionValueRequest
         {
             Value = target.Value,
@@ -1542,6 +1554,12 @@ public class DataverseMetadataAuthoringService : IMetadataAuthoringService
 
         var options = await ListColumnOptionsAsync(request.EntityLogicalName, request.ColumnLogicalName, ct).ConfigureAwait(false);
         var target = ResolveColumnOption(options, request.Value, request.Label, request.EntityLogicalName, request.ColumnLogicalName);
+
+        if (request.DryRun)
+        {
+            _logger?.LogInformation("Dry-run: RemoveColumnOption (value {Value}) from '{Entity}.{Column}' validated", target.Value, request.EntityLogicalName, request.ColumnLogicalName);
+            return;
+        }
 
         var sdkRequest = new SdkDeleteOptionValueRequest
         {

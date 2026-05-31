@@ -31,7 +31,7 @@ public static class EntityCommand
             AllowMultipleArgumentsPerToken = true
         };
 
-        var command = new Command("entity", "Get full metadata for a specific entity")
+        var command = new Command("entity", "Get full metadata for a specific entity, or create/update/delete entities and manage status reasons (see subcommands)")
         {
             entityArgument,
             MetadataCommandGroup.ProfileOption,
@@ -741,18 +741,18 @@ public static class EntityCommand
 
         var solutionOption = new Option<string?>("--solution", "-s")
         {
-            Description = "Solution unique name for value derivation (required when --value is not provided)"
+            Description = "[Required when --value is omitted] Solution unique name; publisher prefix × 10,000 is used to derive the option value"
         };
 
         var stateOption = new Option<string?>("--state")
         {
-            Description = "State the reason belongs to: Active or Inactive"
+            Description = "State the reason belongs to: Active or Inactive (use this OR --state-code, not both)"
         };
         stateOption.AcceptOnlyFromAmong("Active", "Inactive");
 
         var stateCodeOption = new Option<int?>("--state-code")
         {
-            Description = "State code directly: 0 (Active) or 1 (Inactive)"
+            Description = "State code directly: 0 (Active) or 1 (Inactive) (use this OR --state, not both)"
         };
 
         var colorOption = new Option<string?>("--color")
