@@ -312,6 +312,34 @@ public class ModelDrivenAppServiceTests
             .Should().Be("A & B <\"injected\"/>");
     }
 
+    // ── add-table: entity component (type 1) registered via AddAppComponents ─────
+
+    [Fact]
+    [Trait("Category", "Unit")]
+    public async Task AddTable_RegistersEntityComponentViaAddAppComponents()
+    {
+        var h = new Harness();
+        h.Setup(EmptySitemap, DefaultEntities);
+        var service = h.Build();
+
+        await service.AddTableAsync(
+            AppName,
+            new[] { "contact" },
+            new AddTableOptions(Group: null, Area: null, Title: null, Solution: null, Publish: false),
+            progress: null,
+            CancellationToken.None);
+
+        // An AddAppComponents request must target the "entity" component by metadata ID,
+        // with AppId typed as Guid (not EntityReference — see #1183).
+        var addReq = h.ExecutedRequests.Single(r => r.RequestName == "AddAppComponents");
+
+        addReq["AppId"].Should().BeOfType<Guid>()
+            .Which.Should().Be(AppModuleId);
+
+        addReq["Components"].Should().BeOfType<EntityReferenceCollection>()
+            .Which.Should().ContainSingle(er => er.LogicalName == "entity" && er.Id == ContactMetadataId);
+    }
+
     // ── add-table: duplicate entity throws EntityAlreadyInApp ──────────────────
 
     [Fact]

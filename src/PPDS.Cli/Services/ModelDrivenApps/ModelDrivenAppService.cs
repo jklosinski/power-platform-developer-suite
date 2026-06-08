@@ -258,6 +258,7 @@ public sealed class ModelDrivenAppService : IModelDrivenAppService
             .ToHashSet(StringComparer.OrdinalIgnoreCase);
 
         var isFirst = true;
+        var entityMetaIds = new List<Guid>();
         foreach (var entityName in entities)
         {
             progress?.ReportInfo($"Adding {entityName}");
@@ -286,6 +287,9 @@ public sealed class ModelDrivenAppService : IModelDrivenAppService
 
             groupEl.Add(subAreaEl);
             existingEntities.Add(entitySummary.LogicalName);
+
+            if (entitySummary.MetadataId != Guid.Empty)
+                entityMetaIds.Add(entitySummary.MetadataId);
         }
 
         var updatedXml = doc.ToString(SaveOptions.DisableFormatting);
@@ -293,6 +297,12 @@ public sealed class ModelDrivenAppService : IModelDrivenAppService
 
         progress?.ReportPhase("Updating sitemap");
         await PatchSitemapAsync(client, sitemapId, updatedXml, ct);
+
+        if (entityMetaIds.Count > 0)
+        {
+            progress?.ReportPhase("Registering table components");
+            await AddAppComponentsAsync(client, appModuleId, "entity", entityMetaIds, ct);
+        }
 
         if (options.Solution != null)
         {
